@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simple Habit Cash</title>
+<style>
+  :root{
+    --bg:#0f1115;
+    --card:#171a21;
+    --text:#e8eef9;
+    --muted:#93a1b1;
+    --accent:#5ac8fa;
+    --green:#34d399;
+    --red:#f87171;
+    --ring:#2a2f3a;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji;
+    background: var(--bg);
+    color: var(--text);
+    display:flex;
+    align-items:stretch;
+    justify-content:center;
+  }
+  .container{
+    width:100%;
+    max-width:560px;
+    padding:20px;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+  header{
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+    border: 1px solid var(--ring);
+    border-radius:16px;
+    padding:16px 18px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  }
+  header .title{
+    display:flex;gap:10px;align-items:baseline;
+  }
+  .total{
+    font-size:28px;
+    font-weight:800;
+    letter-spacing:0.3px;
+  }
+  .sub{
+    font-size:12px;
+    color:var(--muted);
+  }
+  .date{
+    font-size:12px;
+    color:var(--muted);
+  }
+  .row{
+    display:grid;
+    grid-template-columns:1fr;
+    gap:12px;
+  }
+  .habit{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 16px;
+    border-radius:16px;
+    border:1px solid var(--ring);
+    background: var(--card);
+    box-shadow: 0 10px 24px rgba(0,0,0,0.25);
+  }
+  .label{
+    display:flex; align-items:center; gap:12px;
+    font-size:16px; font-weight:700;
+  }
+  .badge{
+    font-size:12px; color:var(--muted);
+    padding:2px 8px; border-radius:999px;
+    border:1px dashed var(--ring);
+  }
+  button.big{
+    cursor:pointer;
+    border:none;
+    border-radius:12px;
+    padding:12px 16px;
+    font-size:16px;
+    font-weight:800;
+    color:#0b1220;
+    background: linear-gradient(180deg, #c7f3ff, #89dfff);
+    min-width:130px;
+    transition: transform .06s ease, filter .06s ease, box-shadow .15s ease;
+    box-shadow:0 10px 24px rgba(90,200,250,.25);
+  }
+  button.big:active{ transform: scale(0.98); filter:brightness(0.98) }
+  .done{
+    background: linear-gradient(180deg, #c6f7e2, #86efac) !important;
+    box-shadow:0 10px 24px rgba(52,211,153,.25) !important;
+  }
+  .tiny{
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  }
+  .tiny button{
+    border:none; cursor:pointer;
+    font-size:12px; font-weight:700;
+    padding:6px 10px; border-radius:999px;
+    color:var(--text); background:#202633; border:1px solid var(--ring);
+  }
+  .muted{ color:var(--muted) }
+  footer{ text-align:center; color:var(--muted); font-size:12px; padding:6px 0 16px }
+  .grid-2{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
+  @media (min-width:520px){
+    .row{ grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="title">
+        <div class="total" id="totalCash">$0</div>
+        <div class="sub">Total</div>
+      </div>
+      <div class="date" id="todayDate"></div>
+    </header>
+
+    <div class="row" id="habitList">
+      <!-- Habits dynamically inserted -->
+    </div>
+
+    <div class="tiny" style="justify-content:space-between">
+      <div class="muted">Tap a habit to mark <strong>Done Today</strong> and collect its cash.</div>
+      <div class="tiny">
+        <button id="resetToday">Reset Today</button>
+        <button id="settings">Settings</button>
+      </div>
+    </div>
+
+    <footer>Data is saved on this device. Bounties grow +$5/day you skip. Marking done collects the bounty and reduces it by $5 (min $0).</footer>
+  </div>
+
+<script>
+/*
+  Simple Habit Cash — local-only, single-file app.
+  Model:
+    - Each habit has a "bounty" (>=0) that increases by $5 for every missed day.
+    - When you mark it done today, you "collect" the current bounty (adds to Total)
+      and the bounty decreases by $5 (min 0).
+    - If you unmark within the same day, we undo that collection.
+    - Overnight rollover increases bounty for any day not marked done.
+*/
+
+const HABITS = [
+  { id:'meditation', label:'Meditation', emoji:'🧘' },
+  { id:'fitness', label:'Fitness', emoji:'🏋️' },
+  { id:'journaling', label:'Journaling', emoji:'📓' },
+  { id:'learning', label:'Learning', emoji:'📚' },
+  { id:'sleep', label:'Sleep (8h goal)', emoji:'😴' },
+];
+
+const STORAGE_KEY = 'simple_habit_cash_v1';
+
+function todayKey(d=new Date()){
+  const tzOffset = d.getTimezoneOffset(); // minutes
+  // normalize to local date only
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function daysBetween(a, b){ // a,b = 'YYYY-MM-DD'
+  const [ay,am,ad] = a.split('-').map(Number);
+  const [by,bm,bd] = b.split('-').map(Number);
+  const da = new Date(ay, am-1, ad);
+  const db = new Date(by, bm-1, bd);
+  const ms = db - da;
+  return Math.round(ms / (1000*60*60*24));
+}
+function loadState(){
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if(raw){
+    try{ return JSON.parse(raw); }catch(e){}
+  }
+  // default state
+  const tkey = todayKey();
+  const habits = {};
+  HABITS.forEach(h=>{
+    habits[h.id] = {
+      bounty: 0,
+      doneToday: false,
+      collectedToday: 0, // amount added to total by marking done (for undo)
+      lastDay: tkey
+    };
+  });
+  return { version:1, total:0, lastOpen:tkey, habits };
+}
+function saveState(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function rolloverIfNeeded(){
+  const t = todayKey();
+  if(state.lastOpen === t) return;
+
+  // For each day between lastOpen (exclusive) and today (inclusive), we simulate daily rollover.
+  // On each missed day, if habit wasn't done on that day, increase bounty by $5.
+  // We only stored doneToday for the last open day; for intermediate days treat as not done.
+  const gap = daysBetween(state.lastOpen, t);
+  if(gap > 0){
+    const last = state.lastOpen;
+    Object.keys(state.habits).forEach(id=>{
+      const h = state.habits[id];
+      // If they didn't complete on the lastOpen day, it should have already influenced bounty?
+      // Rule: Bounty grows for each day you skip. We check the *days after lastOpen* as skipped.
+      // Also, when moving to a new day, we clear doneToday/collectedToday.
+      // First, account for lastOpen's status: if it wasn't done that day, bounty +$5.
+      if(!h.doneToday){
+        h.bounty += 5;
+      }
+      // For intermediate days (gap - 1 days) also missed => +$5 each
+      if(gap > 1){
+        h.bounty += 5*(gap-1);
+      }
+      h.doneToday = false;
+      h.collectedToday = 0;
+      h.lastDay = t;
+    });
+    state.lastOpen = t;
+    saveState();
+  }
+}
+
+function fmt(n){ return `$${n.toLocaleString()}`; }
+
+function render(){
+  document.getElementById('totalCash').textContent = fmt(state.total);
+  document.getElementById('todayDate').textContent = new Date().toLocaleDateString(undefined, {weekday:'short', month:'short', day:'numeric'});
+
+  const list = document.getElementById('habitList');
+  list.innerHTML = '';
+  HABITS.forEach(h=>{
+    const st = state.habits[h.id];
+    const item = document.createElement('div');
+    item.className = 'habit';
+    const left = document.createElement('div');
+    left.className = 'label';
+    left.innerHTML = `<span style="font-size:22px">${h.emoji}</span><span>${h.label}</span><span class="badge">${st.doneToday ? 'Done today' : 'Not done'}</span>`;
+
+    const btn = document.createElement('button');
+    btn.className = 'big' + (st.doneToday ? ' done' : '');
+    btn.textContent = `${fmt(st.bounty)} ›`;
+
+    btn.addEventListener('click', ()=> toggleHabit(h.id));
+
+    item.appendChild(left);
+    item.appendChild(btn);
+    list.appendChild(item);
+  });
+}
+
+function toggleHabit(id){
+  const h = state.habits[id];
+  const today = todayKey();
+
+  // Ensure date is current
+  if(state.lastOpen !== today){
+    rolloverIfNeeded();
+  }
+
+  if(!h.doneToday){
+    // Mark done: collect bounty, reduce bounty by $5 (min $0)
+    const payout = h.bounty;
+    state.total += payout;
+    h.collectedToday = payout;
+    h.bounty = Math.max(0, h.bounty - 5);
+    h.doneToday = true;
+  }else{
+    // Undo for today only
+    state.total -= h.collectedToday;
+    h.bounty = h.bounty + 5; // restore the $5 reduction we applied when done
+    h.collectedToday = 0;
+    h.doneToday = false;
+  }
+  h.lastDay = today;
+  state.lastOpen = today;
+  saveState();
+  render();
+}
+
+function resetToday(){
+  const today = todayKey();
+  Object.values(state.habits).forEach(h=>{
+    if(h.doneToday){
+      // Undo today's collection
+      state.total -= h.collectedToday;
+      h.bounty = h.bounty + 5;
+      h.collectedToday = 0;
+      h.doneToday = false;
+    }
+    h.lastDay = today;
+  });
+  state.lastOpen = today;
+  saveState();
+  render();
+}
+
+function openSettings(){
+  // Simple settings: set custom names/order and reset all bounties/total
+  const choice = prompt(
+`Settings:
+1) Rename habits (comma separated, five values)
+2) Reset ALL (bounties=0, total=0)
+Enter 1 or 2, or Cancel to close.`
+  );
+  if(choice === '1'){
+    const names = prompt('Enter five labels for: Meditation, Fitness, Journaling, Learning, Sleep\n(Comma separated)').trim();
+    if(!names) return;
+    const parts = names.split(',').map(s=>s.trim()).filter(Boolean);
+    if(parts.length !== 5){ alert('Please enter exactly five labels.'); return; }
+    // Update visible labels only
+    HABITS[0].label = parts[0] || HABITS[0].label;
+    HABITS[1].label = parts[1] || HABITS[1].label;
+    HABITS[2].label = parts[2] || HABITS[2].label;
+    HABITS[3].label = parts[3] || HABITS[3].label;
+    HABITS[4].label = parts[4] || HABITS[4].label;
+    render();
+  }else if(choice === '2'){
+    if(confirm('Really reset ALL bounties and total cash?')){
+      state.total = 0;
+      Object.values(state.habits).forEach(h=>{
+        h.bounty = 0;
+        h.doneToday = false;
+        h.collectedToday = 0;
+      });
+      saveState();
+      render();
+    }
+  }
+}
+
+// --- Init ---
+let state = loadState();
+rolloverIfNeeded();
+render();
+
+document.getElementById('resetToday').addEventListener('click', resetToday);
+document.getElementById('settings').addEventListener('click', openSettings);
+</script>
+</body>
+</html>
