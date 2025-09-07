@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Habit Cash (Swipe)</title>
+<title>Habit Cash (Swipe + Edit)</title>
 <style>
   :root{
     --bg:#0f1115; --card:#171a21; --ring:#2a2f3a; --text:#e8eef9; --muted:#93a1b1;
@@ -17,25 +17,20 @@
   header .total{font-weight:800;font-size:28px}
   header .date{color:var(--muted);font-size:12px}
 
-  /* FULL-WIDTH HABIT BUTTONS WITH SWIPE-RIGHT TO REVEAL DELETE X (LEFT SIDE) */
   .list{display:flex;flex-direction:column;gap:12px}
   .swipe-wrap{position:relative;overflow:hidden;border-radius:16px}
-  .delete-bg{position:absolute;inset:0;background:var(--card);border:1px solid var(--ring)}
-  .delete-bg .xbtn{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:28px;height:28px;border-radius:999px;border:none;background:var(--bad);color:#fff;font-weight:900;font-size:16px;line-height:28px;text-align:center}
-  .delete-bg .xlabel{position:absolute;left:48px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:13px}
+  .delete-bg{position:absolute;inset:0;background:var(--bad);display:flex;align-items:center;justify-content:flex-start;padding-left:16px}
+  .delete-bg .xchar{color:#fff;font-weight:900;font-size:24px}
 
-  .swipe-item{position:relative;touch-action:pan-y; /* allow vertical scroll, we manage x */
-    background:var(--card);border:1px solid var(--ring);border-radius:16px;padding:0;display:block;width:100%}
+  .swipe-item{position:relative;touch-action:pan-y;background:var(--card);border:1px solid var(--ring);border-radius:16px;display:block;width:100%}
   .habit-btn{appearance:none;display:flex;align-items:center;justify-content:space-between;width:100%;padding:16px 18px;background:transparent;border:none;color:var(--text);font-weight:800;font-size:16px}
   .habit-left{display:flex;align-items:center;gap:12px}
   .badge{font-size:12px;color:var(--muted);padding:2px 8px;border-radius:999px;border:1px dashed var(--ring)}
-  .cash{font-weight:900;background:linear-gradient(180deg,#c7f3ff,#89dfff);color:#0b1220;border-radius:12px;padding:10px 14px;min-width:110px;text-align:center;box-shadow:0 8px 18px rgba(137,223,255,.25)}
+  .cash{font-weight:900;background:linear-gradient(180deg,#c7f3ff,#89dfff);color:#0b1220;border-radius:12px;padding:10px 14px;min-width:110px;text-align:center;box-shadow:0 8px 18px rgba(137,223,255,.25);cursor:pointer}
   .done .cash{background:linear-gradient(180deg,#c6f7e2,#86efac)}
 
-  .actions{display:flex;gap:8px}
-  .bar{display:flex;justify-content:center}
+  .bar{display:flex;gap:8px;justify-content:center}
   .bar button{border:1px solid var(--ring);background:#202633;color:var(--text);border-radius:999px;padding:8px 12px;font-weight:700}
-
   footer{color:var(--muted);font-size:12px;text-align:center}
 </style>
 </head>
@@ -50,21 +45,20 @@
 
     <div class="bar">
       <button id="addHabit">+ Add Habit</button>
-      &nbsp;
       <button id="resetToday">Reset Today</button>
-      &nbsp;
       <button id="settings">Settings</button>
     </div>
 
-    <footer>Swipe right on a habit to reveal the X and delete. Tap a habit to mark Done/Undo. Bounties grow +$5/day skipped; completing collects the bounty and reduces it by $5 (min $0).</footer>
+    <footer>Tap a habit to toggle Done/Undo. <strong>Swipe right</strong> to reveal a full red <strong>×</strong> and delete. Tap the <strong>cash pill</strong> to edit the current bounty or daily increment.</footer>
   </div>
 
 <script>
 /*
-  Habit Cash (Swipe)
+  Habit Cash (Swipe + Edit)
   - Full-width habit buttons
-  - Swipe RIGHT to reveal a left-side X delete button
+  - Swipe RIGHT to reveal a full-width red delete background with an ×
   - Tap habit to toggle done/undo for today (collects/undoes bounty)
+  - Tap the cash pill to edit CURRENT bounty and the daily INCREMENT (per-habit)
   - Local storage only
 */
 const DEFAULT_HABITS=[
@@ -74,7 +68,7 @@ const DEFAULT_HABITS=[
   { id:'learning', label:'Learning', emoji:'📚' },
   { id:'sleep', label:'Sleep (8h goal)', emoji:'😴' },
 ];
-const STORAGE_KEY='habit_cash_swipe_v1';
+const STORAGE_KEY='habit_cash_swipe_edit_v1';
 
 function todayKey(d=new Date()){
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -87,14 +81,16 @@ function slugify(s){return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(
 
 function loadState(){
   const raw=localStorage.getItem(STORAGE_KEY);
-  if(raw){try{return JSON.parse(raw)}catch(e){}}
+  if(raw){ try{ return JSON.parse(raw); }catch(e){} }
   const t=todayKey();
   const meta={habits:[...DEFAULT_HABITS]};
   const habits={};
-  meta.habits.forEach(h=>habits[h.id]={bounty:0,doneToday:false,collectedToday:0,lastDay:t});
+  meta.habits.forEach(h=>habits[h.id]={bounty:0,inc:5,doneToday:false,collectedToday:0,lastDay:t});
   return {version:1,total:0,lastOpen:t,habits,meta};
 }
 function saveState(){localStorage.setItem(STORAGE_KEY,JSON.stringify(state))}
+
+function migrateHabit(h){ if(h.inc==null) h.inc=5; }
 
 function rolloverIfNeeded(){
   const t=todayKey();
@@ -102,9 +98,9 @@ function rolloverIfNeeded(){
   const gap=daysBetween(state.lastOpen,t);
   if(gap>0){
     state.meta.habits.forEach(({id})=>{
-      const h=state.habits[id]; if(!h) return;
-      if(!h.doneToday) h.bounty+=5; // last open day missed
-      if(gap>1) h.bounty+=5*(gap-1); // intermediate missed days
+      const h=state.habits[id]; if(!h) return; migrateHabit(h);
+      if(!h.doneToday) h.bounty += h.inc; // last open day missed
+      if(gap>1) h.bounty += h.inc*(gap-1); // intermediate missed days
       h.doneToday=false; h.collectedToday=0; h.lastDay=t;
     });
     state.lastOpen=t; saveState();
@@ -120,23 +116,22 @@ function render(){
   const list=document.getElementById('habitList');
   list.innerHTML='';
   state.meta.habits.forEach(hm=>{
-    const st=state.habits[hm.id]||{bounty:0,doneToday:false,collectedToday:0,lastDay:todayKey()};
+    const st=state.habits[hm.id]||{bounty:0,inc:5,doneToday:false,collectedToday:0,lastDay:todayKey()}; migrateHabit(st);
 
     const wrap=document.createElement('div');
     wrap.className='swipe-wrap';
 
     const bg=document.createElement('div');
     bg.className='delete-bg';
-    const x=document.createElement('button'); x.className='xbtn'; x.textContent='×';
-    x.addEventListener('click',()=>confirmDelete(hm.id,hm.label));
-    const xlab=document.createElement('div'); xlab.className='xlabel'; xlab.textContent='Delete';
-    bg.appendChild(x); bg.appendChild(xlab);
+    const x=document.createElement('div'); x.className='xchar'; x.textContent='×';
+    bg.appendChild(x);
 
     const item=document.createElement('div');
     item.className='swipe-item'+(st.doneToday?' done':'');
 
     const btn=document.createElement('button');
     btn.className='habit-btn';
+
     // LEFT content
     const left=document.createElement('div'); left.className='habit-left';
     const em=document.createElement('span'); em.style.fontSize='22px'; em.textContent=hm.emoji||'✅';
@@ -144,8 +139,9 @@ function render(){
     const badge=document.createElement('span'); badge.className='badge'; badge.textContent=st.doneToday?'Done today':'Not done';
     left.appendChild(em); left.appendChild(lab); left.appendChild(badge);
 
-    // RIGHT cash
+    // RIGHT cash (clickable to edit)
     const cash=document.createElement('div'); cash.className='cash'; cash.textContent=fmt(st.bounty)+' ›';
+    cash.addEventListener('click', (e)=>{ e.stopPropagation(); editCash(hm.id); });
 
     btn.appendChild(left); btn.appendChild(cash);
     btn.addEventListener('click',()=>toggleHabit(hm.id));
@@ -163,8 +159,8 @@ function render(){
 
 function ensureHabitState(id){
   if(!state.habits[id]){
-    state.habits[id]={bounty:0,doneToday:false,collectedToday:0,lastDay:todayKey()};
-  }
+    state.habits[id]={bounty:0,inc:5,doneToday:false,collectedToday:0,lastDay:todayKey()};
+  } else { migrateHabit(state.habits[id]); }
 }
 
 function toggleHabit(id){
@@ -172,17 +168,36 @@ function toggleHabit(id){
   const h=state.habits[id]; const t=todayKey();
   if(state.lastOpen!==t) rolloverIfNeeded();
   if(!h.doneToday){
-    const payout=h.bounty; state.total+=payout; h.collectedToday=payout; h.bounty=Math.max(0,h.bounty-5); h.doneToday=true;
+    const payout=h.bounty; state.total+=payout; h.collectedToday=payout; h.bounty=Math.max(0,h.bounty-h.inc); h.doneToday=true;
   }else{
-    state.total-=h.collectedToday; h.bounty=h.bounty+5; h.collectedToday=0; h.doneToday=false;
+    state.total-=h.collectedToday; h.bounty=h.bounty + h.inc; h.collectedToday=0; h.doneToday=false;
   }
   h.lastDay=t; state.lastOpen=t; saveState(); render();
+}
+
+function editCash(id){
+  ensureHabitState(id);
+  const h=state.habits[id];
+  const curB = h.bounty;
+  const curI = h.inc;
+  const nb = prompt(`Edit current bounty for this habit (in dollars):`, String(curB));
+  if(nb!==null){
+    const val = Math.max(0, Math.round(Number(nb)||0));
+    h.bounty = val;
+  }
+  const ni = prompt(`Edit daily increment (amount it grows when skipped). Default is 5. Leave blank to keep ${curI}:`, "");
+  if(ni!==null && ni.trim()!==''){
+    const inc = Math.max(0, Math.round(Number(ni)||curI));
+    h.inc = inc;
+  }
+  saveState(); render();
 }
 
 function resetToday(){
   const t=todayKey();
   Object.values(state.habits).forEach(h=>{
-    if(h.doneToday){ state.total-=h.collectedToday; h.bounty=h.bounty+5; h.collectedToday=0; h.doneToday=false; }
+    migrateHabit(h);
+    if(h.doneToday){ state.total-=h.collectedToday; h.bounty=h.bounty+h.inc; h.collectedToday=0; h.doneToday=false; }
     h.lastDay=t;
   });
   state.lastOpen=t; saveState(); render();
@@ -197,7 +212,7 @@ function openSettings(){
     state.meta.habits.forEach((h,i)=>h.label=parts[i]||h.label); saveState(); render();
   }else if(choice==='2'){
     if(confirm('Really reset ALL bounties and total cash?')){
-      state.total=0; Object.values(state.habits).forEach(h=>{h.bounty=0; h.doneToday=false; h.collectedToday=0;}); saveState(); render();
+      state.total=0; Object.values(state.habits).forEach(h=>{ migrateHabit(h); h.bounty=0; h.doneToday=false; h.collectedToday=0; }); saveState(); render();
     }
   }
 }
@@ -209,7 +224,7 @@ function addHabit(){
   const used=new Set(state.meta.habits.map(h=>h.id));
   while(used.has(id)) id=`${idBase}-${i++}`;
   state.meta.habits.push({id,label:label.trim(),emoji:emoji.trim()});
-  state.habits[id]={bounty:0,doneToday:false,collectedToday:0,lastDay:todayKey()};
+  state.habits[id]={bounty:0,inc:5,doneToday:false,collectedToday:0,lastDay:todayKey()};
   saveState(); render();
 }
 
@@ -220,37 +235,31 @@ function confirmDelete(id,label){
 
 // --- Swipe handling ---
 function attachSwipe(el, wrap, id){
-  let startX=0, curX=0, dragging=false, open=false; // open means X is revealed
-  const MAX=84; // how far we allow right-swipe to reveal the X
+  let startX=0, dragging=false, open=false; // open means X is revealed
+  const MAX=100; // reveal distance in px (wide enough to clearly show red background)
 
   const setX=(x)=>{ el.style.transform=`translateX(${x}px)`; };
   const reveal=(x)=>{ setX(Math.max(0, Math.min(MAX, x))); };
   const close=()=>{ setX(0); open=false; };
   const openFully=()=>{ setX(MAX); open=true; };
 
-  const onDown=(clientX)=>{ dragging=true; startX=clientX; curX=open?MAX:0; };
-  const onMove=(clientX)=>{
-    if(!dragging) return;
-    const dx=clientX-startX; if(dx<0 && !open) return; // ignore left swipe unless already open
-    reveal(curX + dx);
-  };
+  const onDown=(clientX)=>{ dragging=true; startX=clientX; };
+  const onMove=(clientX)=>{ if(!dragging) return; const dx=clientX-startX; if(dx<0 && !open) return; reveal(open?MAX+dx:dx); };
   const onUp=(clientX)=>{
     if(!dragging) return; dragging=false;
-    const dx=(clientX??startX)-startX; const pos=parseFloat(el.style.transform.replace(/[^0-9.-]/g,''))||0;
-    if(pos>50) { openFully(); } else { close(); }
+    const pos=parseFloat(el.style.transform.replace(/[^0-9.-]/g,''))||0;
+    if(pos>70) { openFully(); } else { close(); }
   };
 
-  // Pointer events (covers touch+mouse)
   el.addEventListener('pointerdown', e=>{ if(e.pointerType==='mouse' && e.button!==0) return; onDown(e.clientX); el.setPointerCapture(e.pointerId); });
-  el.addEventListener('pointermove', e=>{ if(!dragging) return; onMove(e.clientX); });
+  el.addEventListener('pointermove', e=>{ onMove(e.clientX); });
   el.addEventListener('pointerup', e=>{ onUp(e.clientX); el.releasePointerCapture(e.pointerId); });
   el.addEventListener('pointercancel', ()=>{ dragging=false; close(); });
 
-  // If user taps anywhere else in the list, close any open row
-  wrap.addEventListener('click', (e)=>{
-    // If they clicked the X button, ignore (handled separately)
-    if(e.target.closest('.xbtn')) return;
-    if(open && !e.target.closest('.habit-btn')){ close(); }
+  // Tap on red background to delete
+  wrap.querySelector('.delete-bg').addEventListener('click', ()=>{
+    const hm = state.meta.habits.find(h=>h.id===id); if(!hm) return;
+    confirmDelete(id, hm.label);
   });
 }
 
